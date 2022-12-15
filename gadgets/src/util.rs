@@ -232,3 +232,485 @@ pub fn split_u256_limb64(value: &U256) -> [U256; 4] {
         U256([value.0[3], 0, 0, 0]),
     ]
 }
+
+#[cfg(test)]
+mod bool_logic_macro_test {
+
+    // bool!((selectorA && !selectorB) || selectorC)
+    // or::expr([and::expr([selectorA.expr(), not::expr(selectorB.expr())]),
+    // selectorC.expr()])
+    #[derive(Debug, Default, PartialEq)]
+    struct Not<T>(T);
+
+    #[derive(Debug, PartialEq)]
+    struct And<L, R>(L, R);
+
+    #[derive(Debug, PartialEq)]
+    struct Or<L, R>(L, R);
+    // match order is quite important
+    macro_rules! bool {
+        // and(not)
+        // !a && !b
+        (!$a:tt && !$b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-ab1--{:?}", res);
+            res
+        }};
+        ((!$a:tt && !$b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-ab1()--{:?}", res);
+            res
+        }};
+        // (!a) && (!b)
+        ((!$a:tt) && (!$b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-ab2--{:?}", res);
+            res
+        }};
+        (((!$a:tt) && (!$b:tt))) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-ab2()--{:?}", res);
+            res
+        }};
+        // a && !b, a && !(b)
+        ($a:tt && !$b:tt) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-b1--{:?}", res);
+            res
+        }};
+        (($a:tt && !$b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-b1()--{:?}", res);
+            res
+        }};
+        // a && (!b)
+        ($a:tt && (!$b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-b2--{:?}", res);
+            res
+        }};
+        (($a:tt && (!$b:tt))) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = And(left, right);
+            println!("and-not-b2()--{:?}", res);
+            res
+        }};
+        // !a && b , !(a) && b
+        (!$a:tt && $b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and-not-a1--{:?}", res);
+            res
+        }};
+        ((!$a:tt && $b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and-not-a1()--{:?}", res);
+            res
+        }};
+        // (!a) && b
+        ((!$a:tt) && $b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and-not-a2--{:?}", res);
+            res
+        }};
+        (((!$a:tt) && $b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and-not-a2()--{:?}", res);
+            res
+        }};
+
+        // or(not)
+        // !a && !b
+        (!$a:tt || !$b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-ab1--{:?}", res);
+            res
+        }};
+        ((!$a:tt || !$b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-ab1()--{:?}", res);
+            res
+        }};
+        // (!a) || (!b)
+        ((!$a:tt) || (!$b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-ab2--{:?}", res);
+            res
+        }};
+        (((!$a:tt) || (!$b:tt))) => {{
+            let left = bool!(!$a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-ab2()--{:?}", res);
+            res
+        }};
+        // a || !b, a || !(b)
+        ($a:tt || !$b:tt) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-b1--{:?}", res);
+            res
+        }};
+        (($a:tt || !$b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-b1()--{:?}", res);
+            res
+        }};
+        // a || (!b)
+        ($a:tt || (!$b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-b2--{:?}", res);
+            res
+        }};
+        (($a:tt || (!$b:tt))) => {{
+            let left = bool!($a);
+            let right = bool!(!$b);
+            let res = Or(left, right);
+            println!("or-not-b2()--{:?}", res);
+            res
+        }};
+        // !a || b , !(a) || b
+        (!$a:tt || $b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-not-a1--{:?}", res);
+            res
+        }};
+        ((!$a:tt || $b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-not-a1()--{:?}", res);
+            res
+        }};
+        // (!a) || b
+        ((!$a:tt) || $b:tt) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-not-a2--{:?}", res);
+            res
+        }};
+        (((!$a:tt) || $b:tt)) => {{
+            let left = bool!(!$a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-not-a2()--{:?}", res);
+            res
+        }};
+
+        // not
+        (!$a:tt) => {{
+            let a = bool!($a);
+            let res = Not(a);
+            println!("not--{:?}", res);
+            res
+        }};
+        (!($a:tt)) => {{
+            let a = bool!($a);
+            let res = Not(a);
+            println!("not()--{:?}", res);
+            res
+        }};
+        ((!$a:tt)) => {{
+            let a = bool!($a);
+            let res = Not(a);
+            println!("(not)--{:?}", Not($a));
+            res
+        }};
+
+        // and
+        ($a:tt && $b:tt) => {{
+            let left = bool!($a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and1--{:?}", res);
+            res
+        }};
+        (($a:tt && $b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!($b);
+            let res = And(left, right);
+            println!("and2--{:?}", res);
+            res
+        }};
+
+        // or
+        ($a:tt || $b:tt) => {{
+            let left = bool!($a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-1--{:?}", res);
+            res
+        }};
+        (($a:tt || $b:tt)) => {{
+            let left = bool!($a);
+            let right = bool!($b);
+            let res = Or(left, right);
+            println!("or-2--{:?}", res);
+            res
+        }};
+
+        // nothing else type
+        ($param:tt) => {{
+            println!(" logic param: {}", $param);
+            $param
+        }};
+    }
+
+    #[test]
+    fn tt_test_and_or_not() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        assert_eq!(bool!((a && !b) || c), Or(And(true, Not(false)), false));
+        assert_eq!(bool!((a && c) || b), Or(And(true, false), false));
+        assert_eq!(bool!(a || (a && b)), Or(true, And(true, false)));
+        assert_eq!(bool!((a || c) && b), And(Or(true, false), false));
+        assert_eq!(bool!(a && (a || b)), And(true, Or(true, false)));
+        assert_eq!(
+            bool!((a && b) || (a && b)),
+            Or(And(true, false), And(true, false))
+        );
+        assert_eq!(
+            bool!((a && b) || (a || b)),
+            Or(And(true, false), Or(true, false))
+        );
+        assert_eq!(
+            bool!((a && b) && (a || b)),
+            And(And(true, false), Or(true, false))
+        );
+        assert_eq!(
+            bool!((a || b) && (a || b)),
+            And(Or(true, false), Or(true, false))
+        );
+    }
+
+  #[test]
+    fn tt_test_and_or() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        assert_eq!(bool!((!a && c) || b), Or(And(Not(true), false), false));
+        assert_eq!(bool!((a && !c) || b), Or(And(true, Not(false)), false));
+        assert_eq!(bool!((a && c) || !b), Or(And(true, false), Not(false)));
+
+
+        assert_eq!(bool!(!a || (a && b)), Or(Not(true), And(true, false)));
+        assert_eq!(bool!(a || (!a && b)), Or(true, And(Not(true), false)));
+        assert_eq!(bool!(a || (a && !b)), Or(true, And(true, Not(false))));
+
+
+        assert_eq!(bool!((!a || c) && b), And(Or(Not(true), false), false));
+        assert_eq!(bool!((a || !c) && b), And(Or(true, Not(false)), false));
+        assert_eq!(bool!((a || c) && !b), And(Or(true, false), Not(false)));
+
+        assert_eq!(bool!(!a && (a || b)), And(Not(true), Or(true, false)));
+        assert_eq!(bool!(a && (!a || b)), And(true, Or(Not(true), false)));
+        assert_eq!(bool!(a && (a || !b)), And(true, Or(true, Not(false))));
+
+        assert_eq!(
+            bool!((!a && b) || (a && b)),
+            Or(And(Not(true), false), And(true, false))
+        );
+        assert_eq!(
+            bool!(!(a && b) || (a && b)),
+            Or(Not(And(true, false)), And(true, false))
+        );
+        assert_eq!(
+            bool!(!(!a && b) || !(a && b)),
+            Or(Not(And(Not(true), false)), Not(And(true, false)))
+        );
+
+
+        assert_eq!(
+            bool!((a && !b) || !(a || b)),
+            Or(And(true, Not(false)), Not(Or(true, false)))
+        );
+        assert_eq!(
+            bool!(!(!a && !b) || (!a || !b)),
+            Or(Not(And(Not(true), Not(false))), Or(Not(true), Not(false)))
+        );
+        assert_eq!(
+            bool!(!((a && b) || (a || b))),
+           Not( Or(And(true, false), Or(true, false)))
+        );
+
+
+        assert_eq!(
+            bool!((a || b) && (a || b)),
+            And(Or(true, false), Or(true, false))
+        );
+    }
+
+    #[test]
+    fn tt_test_and_not() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        // a && !b
+        assert_eq!(bool!(a && !b), And(true, Not(false))); // 1
+        assert_eq!(bool!((a) && (!b)), And(true, Not(false))); // 1
+        assert_eq!(bool!((a) && !(b)), And(true, Not(false))); // 2
+
+        // !a && b
+        assert_eq!(bool!(!(a) && b), And(Not(true), false)); // 1
+        assert_eq!(bool!(!a && b), And(Not(true), false)); // 1
+        assert_eq!(bool!((!a) && b), And(Not(true), false)); // 2
+
+        // !a && !b -- and-not-ab2
+        assert_eq!(bool!(!a && !b), And(Not(true), Not(false))); // 1
+        assert_eq!(bool!((!a) && (!b)), And(Not(true), Not(false))); // 2
+
+        // Not(blabla)
+        assert_eq!(bool!(!(a && b)), Not(And(true, false)));
+        assert_eq!(
+            bool!(!(a && c) && b),
+            And(Not(And(true, false)), false)
+        );
+        assert_eq!(
+            bool!(!((a && c) && b)),
+            Not(And(And(true, false), false))
+        );
+        assert_eq!(
+            bool!(!(a && (a && b))),
+            Not(And(true, And(true, false)))
+        );
+        assert_eq!(
+            bool!(!((a && b) && (a && b))),
+            Not(And(And(true, false), And(true, false)))
+        );
+    }
+
+    #[test]
+    fn tt_test_or_not() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        // a || !b
+        assert_eq!(bool!(a || !b), Or(true, Not(false))); // 1
+        assert_eq!(bool!((a) || (!b)), Or(true, Not(false))); // 1
+        assert_eq!(bool!((a) || !(b)), Or(true, Not(false))); // 2
+
+        // !a || b
+        assert_eq!(bool!(!(a) || b), Or(Not(true), false)); // 1
+        assert_eq!(bool!(!a || b), Or(Not(true), false)); // 1
+        assert_eq!(bool!((!a) || b), Or(Not(true), false)); // 2
+
+        // !a || !b -- Or-not-ab2
+        assert_eq!(bool!(!a || !b), Or(Not(true), Not(false))); // 1
+        assert_eq!(bool!((!a) || (!b)), Or(Not(true), Not(false))); // 2
+
+        // Not(blabla)
+        assert_eq!(bool!(!(a || b)), Not(Or(true, false)));
+        assert_eq!(
+            bool!(!(a || c) || b),
+            Or(Not(Or(true, false)), false)
+        );
+        assert_eq!(
+            bool!(!((a || c) || b)),
+            Not(Or(Or(true, false), false))
+        );
+        assert_eq!(
+            bool!(!(a || (a || b))),
+            Not(Or(true, Or(true, false)))
+        );
+        assert_eq!(
+            bool!(!((a || b) || (a || b))),
+            Not(Or(Or(true, false), Or(true, false)))
+        );
+    }
+
+    #[test]
+    fn tt_test_and() {
+        let a = false;
+        let b = false;
+        let c = true;
+
+        assert_eq!(bool!(a && b), And(false, false));
+        assert_eq!(bool!((a) && (b)), And(false, false));
+        assert_eq!(bool!((a) && b), And(false, false));
+        assert_eq!(bool!((a && b) && b), And(And(false, false), false));
+        assert_eq!(
+            bool!((a && b) && (b && c)),
+            And(And(false, false), And(false, true))
+        );
+        assert_eq!(bool!((a && b)), And(false, false));
+    }
+
+    #[test]
+    fn tt_test_or() {
+        let a = false;
+        let b = false;
+        let c = true;
+
+        assert_eq!(bool!(a || b), Or(false, false));
+        assert_eq!(bool!((a) || (b)), Or(false, false));
+        assert_eq!(bool!((a) || b), Or(false, false));
+        assert_eq!(bool!((a || b) || b), Or(Or(false, false), false));
+        assert_eq!(
+            bool!((a || b) || (b || c)),
+            Or(Or(false, false), Or(false, true))
+        );
+        assert_eq!(bool!((a || b)), Or(false, false));
+    }
+
+    #[test]
+    fn tt_test_not() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        assert_eq!(bool!(!a), Not(true));
+        assert_eq!(bool!((!a)), Not(true));
+        assert_eq!(bool!(!(a)), Not(true));
+    }
+
+    #[test]
+    fn tt_test_param() {
+        let a = true;
+        let b = false;
+        let c = false;
+
+        assert_eq!(bool!(a), true);
+        assert_eq!(bool!((a)), true);
+    }
+}
