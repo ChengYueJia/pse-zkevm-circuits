@@ -1,5 +1,5 @@
 use crate::evm_circuit::util::{rlc, RandomLinearCombination};
-use crate::table::LookupTable;
+use crate::table::{AssignTable, LookupTable};
 use crate::util::Challenges;
 use eth_types::{Field, ToLittleEndian, Word};
 use halo2_proofs::plonk::Any;
@@ -16,51 +16,22 @@ pub struct KeccakTable {
     /// True when the row is enabled
     pub is_enabled: Column<Advice>,
     /// Byte array input as `RLC(reversed(input))`
-    pub input_rlc: Column<Advice>, // RLC of input bytes
+    pub input_rlc: Column<Advice>,
+    // RLC of input bytes
     /// Byte array input length
     pub input_len: Column<Advice>,
     /// RLC of the hash result
     pub output_rlc: Column<Advice>, // RLC of hash of input bytes
 }
 
-impl<F: Field> LookupTable<F> for KeccakTable {
-    fn columns(&self) -> Vec<Column<Any>> {
-        vec![
-            self.is_enabled.into(),
-            self.input_rlc.into(),
-            self.input_len.into(),
-            self.output_rlc.into(),
-        ]
-    }
-
-    fn annotations(&self) -> Vec<String> {
-        vec![
-            String::from("is_enabled"),
-            String::from("input_rlc"),
-            String::from("input_len"),
-            String::from("output_rlc"),
-        ]
-    }
-}
-
-type KeccakTableRow<F> = [Value<F>; 4];
+type KeccakTableRow = [Value<F>; 4];
 
 impl KeccakTable {
-    /// Construct a new KeccakTable
-    pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
-        Self {
-            is_enabled: meta.advice_column(),
-            input_rlc: meta.advice_column_in(SecondPhase),
-            input_len: meta.advice_column(),
-            output_rlc: meta.advice_column_in(SecondPhase),
-        }
-    }
-
     /// Generate the keccak table assignments from a byte array input.
     pub fn assignments<F: Field>(
         input: &[u8],
         challenges: &Challenges<Value<F>>,
-    ) -> Vec<[Value<F>; 4]> {
+    ) -> Vec<KeccakTableRow> {
         let input_rlc = challenges
             .keccak_input()
             .map(|challenge| rlc::value(input.iter().rev(), challenge));
@@ -83,21 +54,6 @@ impl KeccakTable {
         ]]
     }
 
-    /// Assign a table row for keccak table
-    pub(crate) fn assign_row<F: Field>(
-        &self,
-        region: &mut Region<F>,
-        offset: usize,
-        row: KeccakTableRow<F>,
-    ) -> Result<(), Error> {
-        let table_column = <KeccakTable as LookupTable<F>>::advice_columns(self);
-
-        for (column, value) in table_column.iter().zip_eq(row) {
-            region.assign_advice(|| format!("assign {}", offset), *column, offset, || value)?;
-        }
-        Ok(())
-    }
-
     /// Provide this function for the case that we want to consume a keccak
     /// table but without running the full keccak circuit
     pub fn dev_load<'a, F: Field>(
@@ -112,6 +68,7 @@ impl KeccakTable {
                 let mut offset = 0;
 
                 self.assign_row(&mut region, offset, [Value::known(F::zero()); 4])?;
+
                 offset += 1;
 
                 for input in inputs.clone() {
@@ -138,6 +95,52 @@ impl KeccakTable {
             (value_rlc, self.input_rlc),
             (length, self.input_len),
             (code_hash, self.output_rlc),
+        ]
+    }
+}
+
+impl<F: Field> AssignTable<F> for KeccakTable {
+    const TABLE_NAME: &'static str = "keccak table";
+    type TableRowValue = KeccakTableRow;
+    type LoadArgs = ();
+    type AssignmentsArgs = ();
+
+    /// Construct a new KeccakTable
+    fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
+        Self {
+            is_enabled: meta.advice_column(),
+            input_rlc: meta.advice_column_in(SecondPhase),
+            input_len: meta.advice_column(),
+            output_rlc: meta.advice_column_in(SecondPhase),
+        }
+    }
+
+    // TODO unify table load logic here and keccak circuit.
+    fn assignments<F: Field>(&self, args: Self::LoadArgs) -> Vec<Self::TableRowValue> {
+        todo!()
+    }
+
+    // TODO unify table load logic here and keccak circuit.
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
+        todo!()
+    }
+}
+impl<F: Field> LookupTable<F> for KeccakTable {
+    fn columns(&self) -> Vec<Column<Any>> {
+        vec![
+            self.is_enabled.into(),
+            self.input_rlc.into(),
+            self.input_len.into(),
+            self.output_rlc.into(),
+        ]
+    }
+
+    fn annotations(&self) -> Vec<String> {
+        vec![
+            String::from("is_enabled"),
+            String::from("input_rlc"),
+            String::from("input_len"),
+            String::from("output_rlc"),
         ]
     }
 }

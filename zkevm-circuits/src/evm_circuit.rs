@@ -297,8 +297,14 @@ pub mod test {
 
     use eth_types::{Field, Word};
 
+    use crate::evm_circuit::table::Lookup::ExpTable;
     use crate::table::block_table::BlockTableLoadArgs;
     use crate::table::bytecode_table::BytecodeTableLoadArgs;
+    use crate::table::copy_table::CopyTableLoadArgs;
+    use crate::table::exp_table::ExpTableLoadArgs;
+    use crate::table::rw_table::RwTableLoadArgs;
+    use crate::table::tx_table::TxTableLoadArgs;
+    use crate::table::AssignTable;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         plonk::{Circuit, ConstraintSystem, Error},
@@ -378,44 +384,62 @@ pub mod test {
 
             config.tx_table.load(
                 &mut layouter,
-                &block
-                    .eth_block
-                    .transactions
-                    .iter()
-                    .map(|tx| tx.into())
-                    .collect(),
-                block.circuits_params.max_txs,
-                None,
-                &challenges,
+                TxTableLoadArgs {
+                    txs: &block
+                        .eth_block
+                        .transactions
+                        .iter()
+                        .map(|tx| tx.into())
+                        .collect(),
+                    max_txs: circuits_params.max_txs,
+                    sig_verif_vec: None,
+                    challenges: challenge_values.clone(),
+                },
             )?;
+
             block.rws.check_rw_counter_sanity();
             config.rw_table.load(
                 &mut layouter,
-                &block.rws.table_assignments(),
-                block.circuits_params.max_rws,
-                challenges.evm_word(),
+                RwTableLoadArgs {
+                    rws: &block.rws.rws.table_assignments(),
+                    padding_rows_num: block.circuits_params.max_rws,
+                    challenges: challenge_values.clone(),
+                },
             )?;
+
             config.bytecode_table.load(
                 &mut layouter,
                 BytecodeTableLoadArgs {
-                    bytecodes: Some(Vec::from_iter(block.bytecodes.values())),
-                    bytecode: None,
+                    bytecodes: Vec::from_iter(block.bytecodes.values()),
                     challenges: challenges.clone(),
                 },
-            )?;
+            );
 
             config.block_table.load(
                 &mut layouter,
                 BlockTableLoadArgs {
-                    block: block.context.clone(),
+                    block: &block.context,
                     randomness: challenges.evm_word(),
                 },
-            )?;
-            config.copy_table.load(&mut layouter, block, &challenges)?;
+            );
+
+            config.copy_table.load(
+                &mut layouter,
+                CopyTableLoadArgs {
+                    copy_events: &block.copy_events,
+                    challenges,
+                },
+            );
+
             config
                 .keccak_table
                 .dev_load(&mut layouter, &block.sha3_inputs, &challenges)?;
-            config.exp_table.load(&mut layouter, block)?;
+            config.exp_table.load(
+                &mut layouter,
+                ExpTableLoadArgs {
+                    exp_events: &block.exp_events,
+                },
+            );
 
             self.synthesize_sub(&config, &challenges, &mut layouter)
         }

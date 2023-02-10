@@ -65,7 +65,7 @@ use crate::state_circuit::{StateCircuit, StateCircuitConfig, StateCircuitConfigA
 use crate::table::{
     block_table::BlockTable, bytecode_table::BytecodeTable, copy_table::CopyTable,
     exp_table::ExpTable, keccak_table::KeccakTable, mpt_table::MptTable, rw_table::RwTable,
-    tx_table::TxTable,
+    tx_table::TxTable, AssignTable, LookupTable,
 };
 use crate::tx_circuit::{TxCircuit, TxCircuitConfig, TxCircuitConfigArgs};
 use crate::util::{log2_ceil, Challenges, SubCircuit, SubCircuitConfig};
@@ -79,6 +79,8 @@ use halo2_proofs::{
     plonk::{Circuit, ConstraintSystem, Error, Expression},
 };
 
+use crate::table::block_table::BlockTableLoadArgs;
+use crate::table::mpt_table::MptTableLoadArgs;
 use std::array;
 
 /// Configuration of the Super Circuit
@@ -389,15 +391,19 @@ impl<F: Field, const MAX_TXS: usize, const MAX_CALLDATA: usize, const MOCK_RANDO
 
         config.block_table.load(
             &mut layouter,
-            &block.context,
-            Value::known(block.randomness),
-        )?;
+            BlockTableLoadArgs {
+                block: &block.context,
+                randomness: Value::known(block.randomness),
+            },
+        );
 
         config.mpt_table.load(
             &mut layouter,
-            &MptUpdates::mock_from(rws),
-            Value::known(block.randomness),
-        )?;
+            MptTableLoadArgs {
+                updates: &MptUpdates::mock_from(rws),
+                randomness: block.randomness,
+            },
+        );
 
         self.synthesize_sub(&config, &challenges, &mut layouter)
     }
@@ -604,6 +610,7 @@ pub(crate) mod super_circuit_tests {
         };
         test_super_circuit::<MAX_TXS, MAX_CALLDATA, TEST_MOCK_RANDOMNESS>(block, circuits_params);
     }
+
     #[ignore]
     #[test]
     fn serial_test_super_circuit_1tx_2max_tx() {
@@ -620,6 +627,7 @@ pub(crate) mod super_circuit_tests {
         };
         test_super_circuit::<MAX_TXS, MAX_CALLDATA, TEST_MOCK_RANDOMNESS>(block, circuits_params);
     }
+
     #[ignore]
     #[test]
     fn serial_test_super_circuit_2tx_2max_tx() {

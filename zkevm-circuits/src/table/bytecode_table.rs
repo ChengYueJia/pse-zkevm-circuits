@@ -1,6 +1,6 @@
 use crate::evm_circuit::util::{rlc, RandomLinearCombination};
 use crate::impl_expr;
-use crate::table::LookupTable;
+use crate::table::{AssignTable, LookupTable};
 use crate::util::Challenges;
 use crate::witness::Bytecode;
 use eth_types::evm_types::OpcodeId;
@@ -39,18 +39,29 @@ pub struct BytecodeTable {
 }
 
 /// Table load arguments
-pub(crate) struct BytecodeTableLoadArgs<'a, 'b, F: Fielda> {
+pub(crate) struct BytecodeTableLoadArgs<'a, F: Field> {
     /// Bytecodes Values. Used for load method
-    pub(crate) bytecodes: Option<Vec<&'a Bytecode>>,
-    /// Bytecode Values. Used for assignments method
-    pub(crate) bytecode: Option<&'a Bytecode>,
+    pub(crate) bytecodes: Vec<&'a Bytecode>,
     /// Challenges
     pub(crate) challenges: Challenges<Value<F>>,
 }
 
-impl BytecodeTable {
+/// Table assignments arguments
+pub(crate) struct BytecodeTableAssignmentsArgs<'b, F: Field> {
+    /// Bytecode Values. Used for assignments method
+    pub(crate) bytecode: &'b Bytecode,
+    /// Challenges
+    pub(crate) challenges: Challenges<Value<F>>,
+}
+
+impl<'a, 'b, F: Field> AssignTable<F> for BytecodeTable {
+    const TABLE_NAME: &'static str = "bytecode table";
+    type TableRowValue = [Value<F>; 5];
+    type LoadArgs = BytecodeTableLoadArgs<'a, F>;
+    type AssignmentsArgs = BytecodeTableAssignmentsArgs<'b, F>;
+
     /// Construct a new BytecodeTable
-    pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
+    fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
         let [tag, index, is_code, value] = array::from_fn(|_| meta.advice_column());
         let code_hash = meta.advice_column_in(SecondPhase);
         Self {
@@ -61,13 +72,77 @@ impl BytecodeTable {
             value,
         }
     }
+
+    fn assignments<F: Field>(&self, args: Self::AssignmentsArgs) -> Vec<Self::TableRowValue> {
+        let bytecode = args.bytecode;
+
+        let n = 1 + bytecode.bytes.len();
+        let mut rows = Vec::with_capacity(n);
+        let hash = args
+            .challenges
+            .evm_word()
+            .map(|challenge| rlc::value(&bytecode.hash.to_le_bytes(), challenge));
+
+        rows.push([
+            hash,
+            Value::known(F::from(BytecodeFieldTag::Header as u64)),
+            Value::known(F::zero()),
+            Value::known(F::zero()),
+            Value::known(F::from(bytecode.bytes.len() as u64)),
+        ]);
+
+        let mut push_data_left = 0;
+        for (idx, byte) in bytecode.bytes.iter().enumerate() {
+            let is_code = push_data_left == 0;
+
+            push_data_left = if is_code {
+                // push_data_left will be > 0 only if it is a push opcode
+                OpcodeId::from(*byte).data_len()
+            } else {
+                push_data_left - 1
+            };
+
+            rows.push([
+                hash,
+                Value::known(F::from(BytecodeFieldTag::Byte as u64)),
+                Value::known(F::from(idx as u64)),
+                Value::known(F::from(is_code as u64)),
+                Value::known(F::from(*byte as u64)),
+            ])
+        }
+        rows
+    }
+
+    /// Assign the `BytecodeTable` from a list of bytecodes, followig the same
+    /// table layout that the Bytecode Circuit uses.
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
+        layouter.assign_region(
+            || format!("assign {}", Self::TABLE_NAME),
+            |mut region| {
+                let mut offset = 0;
+
+                // assign zero row
+                self.assign_row(&mut region, offset, [Value::known(F::zero()); 5])?;
+
+                offset += 1;
+
+                for bytecode in args.bytecodes {
+                    for row in self.assignments(Self::AssignmentsArgs {
+                        bytecode,
+                        challenges,
+                    }) {
+                        self.assign_row(&mut region, offset, row)?;
+
+                        offset += 1;
+                    }
+                }
+                Ok(())
+            },
+        )
+    }
 }
 
-impl<'a, 'b, F: Field> LookupTable<F> for BytecodeTable {
-    const TABLE_NAME: &'static str = "bytecode table";
-    type TableRowValue = [Value<F>; 5];
-    type LoadArgs = BytecodeTableLoadArgs<'a, 'b, F>;
-
+impl<F: Field> LookupTable<F> for BytecodeTable {
     fn columns(&self) -> Vec<Column<Any>> {
         vec![
             self.code_hash.into(),
@@ -86,91 +161,5 @@ impl<'a, 'b, F: Field> LookupTable<F> for BytecodeTable {
             String::from("is_code"),
             String::from("value"),
         ]
-    }
-
-    fn assignments<F: Field>(&self, args: Self::LoadArgs) -> Vec<Self::TableRowValue> {
-        if let Some(bytecode) = args.bytecode {
-            let n = 1 + bytecode.bytes.len();
-            let mut rows = Vec::with_capacity(n);
-            let hash = args
-                .challenges
-                .evm_word()
-                .map(|challenge| rlc::value(&bytecode.hash.to_le_bytes(), challenge));
-
-            rows.push([
-                hash,
-                Value::known(F::from(BytecodeFieldTag::Header as u64)),
-                Value::known(F::zero()),
-                Value::known(F::zero()),
-                Value::known(F::from(bytecode.bytes.len() as u64)),
-            ]);
-
-            let mut push_data_left = 0;
-            for (idx, byte) in bytecode.bytes.iter().enumerate() {
-                let is_code = push_data_left == 0;
-
-                push_data_left = if is_code {
-                    // push_data_left will be > 0 only if it is a push opcode
-                    OpcodeId::from(*byte).data_len()
-                } else {
-                    push_data_left - 1
-                };
-
-                rows.push([
-                    hash,
-                    Value::known(F::from(BytecodeFieldTag::Byte as u64)),
-                    Value::known(F::from(idx as u64)),
-                    Value::known(F::from(is_code as u64)),
-                    Value::known(F::from(*byte as u64)),
-                ])
-            }
-            rows
-        } else {
-            log::warn!("The args.bytecode in BytecodeTable::assignments is None");
-            vec![]
-        }
-    }
-
-    /// Assign the `BytecodeTable` from a list of bytecodes, followig the same
-    /// table layout that the Bytecode Circuit uses.
-    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
-        layouter.assign_region(
-            || format!("assign {}", Self::TABLE_NAME),
-            |mut region| {
-                let mut offset = 0;
-
-                // assign zero row
-                <BytecodeTable as LookupTable<F>>::assign_row(
-                    self,
-                    &mut region,
-                    offset,
-                    [Value::known(F::zero()); 5],
-                )?;
-
-                offset += 1;
-
-                if let Some(bytecodes) = args.bytecodes {
-                    for bytecode in bytecodes {
-                        for row in self.assignments(Self::LoadArgs {
-                            bytecodes: None,
-                            bytecode: Some(bytecode),
-                            challenges,
-                        }) {
-                            <BytecodeTable as LookupTable<F>>::assign_row(
-                                self,
-                                &mut region,
-                                offset,
-                                row,
-                            )?;
-
-                            offset += 1;
-                        }
-                    }
-                } else {
-                    log::warn!("The args.bytecodes in BytecodeTable::load is None");
-                }
-                Ok(())
-            },
-        )
     }
 }

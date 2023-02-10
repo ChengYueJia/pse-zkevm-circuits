@@ -7,6 +7,8 @@ mod random_linear_combination;
 #[cfg(test)]
 mod test;
 
+use crate::table::mpt_table::MptTableLoadArgs;
+use crate::table::AssignTable;
 use crate::{
     evm_circuit::{param::N_BYTES_WORD, util::rlc},
     table::{
@@ -530,9 +532,15 @@ where
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         let challenges = challenges.values(&mut layouter);
-        config
-            .mpt_table
-            .load(&mut layouter, &self.updates, challenges.evm_word())?;
+
+        config.mpt_table.load(
+            layouter,
+            MptTableLoadArgs {
+                updates: &self.updates,
+                randomness: challenges.evm_word(),
+            },
+        );
+
         self.synthesize_sub(&config, &challenges, &mut layouter)
     }
 }

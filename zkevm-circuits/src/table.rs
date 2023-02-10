@@ -28,15 +28,6 @@ use strum_macros::{EnumCount, EnumIter};
 
 /// Trait used to define lookup tables
 pub trait LookupTable<F: Field> {
-    /// Name of the table
-    const TABLE_NAME: &'static str;
-
-    /// The value of a row in table.
-    type TableRowValue;
-
-    /// The arguments for loading table.
-    type LoadArgs;
-
     /// Returns the list of ALL the table columns following the table order.
     fn columns(&self) -> Vec<Column<Any>>;
 
@@ -77,7 +68,42 @@ pub trait LookupTable<F: Field> {
             .zip(self.annotations().iter())
             .for_each(|(&col, ann)| region.name_column(|| ann, col))
     }
+}
 
+impl<F: Field, C: Into<Column<Any>> + Copy, const W: usize> LookupTable<F> for [C; W] {
+    fn table_exprs(&self, meta: &mut VirtualCells<F>) -> Vec<Expression<F>> {
+        self.iter()
+            .map(|column| meta.query_any(*column, Rotation::cur()))
+            .collect()
+    }
+
+    fn columns(&self) -> Vec<Column<Any>> {
+        self.iter().map(|&col| col.into()).collect()
+    }
+
+    fn annotations(&self) -> Vec<String> {
+        vec![]
+    }
+}
+
+/// Trait used to define lookup tables
+pub trait AssignTable<F: Field> {
+    /// Name of the table
+    const TABLE_NAME: &'static str;
+
+    /// The value of a row in table.
+    type TableRowValue;
+
+    /// The arguments for loading table. Used by load method
+    type LoadArgs;
+
+    /// The arguments for assignments. Used by assignments method.
+    type AssignmentsArgs;
+
+    /// Construct a new Table
+    fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self;
+
+    /// Assign a row in a table.
     fn assign_row<F: Field>(
         &self,
         region: &mut Region<F>,
@@ -98,25 +124,9 @@ pub trait LookupTable<F: Field> {
     }
 
     /// Assignments LoadArgs to TableRowValue.
-    fn assignments<F: Field>(&self, args: Self::LoadArgs) -> Vec<Self::TableRowValue>;
+    fn assignments<F: Field>(&self, args: Self::AssignmentsArgs) -> Vec<Self::TableRowValue>;
 
     fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error>;
-}
-
-impl<F: Field, C: Into<Column<Any>> + Copy, const W: usize> LookupTable<F> for [C; W] {
-    fn table_exprs(&self, meta: &mut VirtualCells<F>) -> Vec<Expression<F>> {
-        self.iter()
-            .map(|column| meta.query_any(*column, Rotation::cur()))
-            .collect()
-    }
-
-    fn columns(&self) -> Vec<Column<Any>> {
-        self.iter().map(|&col| col.into()).collect()
-    }
-
-    fn annotations(&self) -> Vec<String> {
-        vec![]
-    }
 }
 
 /// Tag for an AccountField in RwTable

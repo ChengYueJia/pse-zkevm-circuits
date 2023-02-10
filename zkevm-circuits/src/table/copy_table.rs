@@ -1,7 +1,7 @@
 use crate::copy_circuit::number_or_hash_to_field;
 use crate::evm_circuit::util::rlc;
 use crate::table::bytecode_table::BytecodeTable;
-use crate::table::{LookupTable, TxLogFieldTag};
+use crate::table::{AssignTable, LookupTable, TxLogFieldTag};
 use crate::util::{build_tx_log_address, Challenges};
 use crate::witness::Block;
 use bus_mapping::circuit_input_builder::{CopyDataType, CopyEvent, CopyStep};
@@ -50,10 +50,31 @@ pub struct CopyTable {
     pub tag: BinaryNumberConfig<CopyDataType, 3>,
 }
 
+/// Table load arguments
+pub(crate) struct CopyTableLoadArgs<'a, F: Field> {
+    /// Copy Values.
+    pub(crate) copy_events: &'a Vec<CopyEvent>,
+    /// Challenges
+    pub(crate) challenges: Challenges<Value<F>>,
+}
+
+/// Table assignmentes arguments
+pub(crate) struct CopyTableAssignmentsArgs<'b, F: Field> {
+    /// Copy Values.
+    pub(crate) copy_event: &'b CopyEvent,
+    /// Challenges
+    pub(crate) challenges: Challenges<Value<F>>,
+}
+
 type CopyTableRow<F> = [(Value<F>, &'static str); 8];
 type CopyCircuitRow<F> = [(Value<F>, &'static str); 4];
 
-impl CopyTable {
+impl<'a, 'b, F: Field> AssignTable<F> for CopyTable {
+    const TABLE_NAME: &'static str = "copy table";
+    type TableRowValue = (CopyDataType, CopyTableRow<F>, CopyCircuitRow<F>);
+    type LoadArgs = CopyTableLoadArgs<'a, F>;
+    type AssignmentsArgs = CopyTableAssignmentsArgs<'b, F>;
+
     /// Construct a new CopyTable
     pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>, q_enable: Column<Fixed>) -> Self {
         Self {
@@ -69,12 +90,29 @@ impl CopyTable {
         }
     }
 
+    fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: Self::TableRowValue,
+    ) -> Result<(), Error> {
+        let table_column = <CopyTable as LookupTable<F>>::advice_columns(self);
+
+        for (column, value) in table_column.iter().zip_eq(row.2) {
+            region.assign_advice(
+                || format!("{} {} row, offset {}", Self::TABLE_NAME, value.1, offset),
+                *column,
+                offset,
+                || value.0,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Generate the copy table and copy circuit assignments from a copy event.
-    pub fn assignments<F: Field>(
-        copy_event: &CopyEvent,
-        challenges: Challenges<Value<F>>,
-    ) -> Vec<(CopyDataType, CopyTableRow<F>, CopyCircuitRow<F>)> {
+    fn assignments<F: Field>(&self, args: Self::AssignmentsArgs) -> Vec<Self::TableRowValue> {
         let mut assignments = Vec::new();
+
         // rlc_acc
         let rlc_acc = if copy_event.dst_type == CopyDataType::RlcAcc {
             let values = copy_event
@@ -82,7 +120,7 @@ impl CopyTable {
                 .iter()
                 .map(|(value, _)| *value)
                 .collect::<Vec<u8>>();
-            challenges
+            args.challenges
                 .keccak_input()
                 .map(|keccak_input| rlc::value(values.iter().rev(), keccak_input))
         } else {
@@ -124,9 +162,9 @@ impl CopyTable {
 
             // id
             let id = if is_read_step {
-                number_or_hash_to_field(&copy_event.src_id, challenges.evm_word())
+                number_or_hash_to_field(&copy_event.src_id, args.challenges.evm_word())
             } else {
-                number_or_hash_to_field(&copy_event.dst_id, challenges.evm_word())
+                number_or_hash_to_field(&copy_event.dst_id, args.challenges.evm_word())
             };
 
             // tag binary bumber chip
@@ -165,7 +203,7 @@ impl CopyTable {
                 if is_read_step {
                     Value::known(F::from(copy_step.value as u64))
                 } else {
-                    value_acc = value_acc * challenges.keccak_input()
+                    value_acc = value_acc * args.challenges.keccak_input()
                         + Value::known(F::from(copy_step.value as u64));
                     value_acc
                 }
@@ -212,34 +250,10 @@ impl CopyTable {
         assignments
     }
 
-    pub(crate) fn assign_row<F: Field>(
-        &self,
-        region: &mut Region<F>,
-        offset: usize,
-        row: CopyTableRow<F>,
-    ) -> Result<(), Error> {
-        let table_column = <CopyTable as LookupTable<F>>::advice_columns(self);
-
-        for (column, (value, label)) in table_column.iter().zip_eq(row) {
-            region.assign_advice(
-                || format!("copy table {} row {}", label, offset),
-                *column,
-                offset,
-                || value,
-            )?;
-        }
-        Ok(())
-    }
-
     /// Assign the `CopyTable` from a `Block`.
-    pub fn load<F: Field>(
-        &self,
-        layouter: &mut impl Layouter<F>,
-        block: &Block<F>,
-        challenges: &Challenges<Value<F>>,
-    ) -> Result<(), Error> {
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
         layouter.assign_region(
-            || "copy table",
+            || format!("assign {}", Self::TABLE_NAME),
             |mut region| {
                 let mut offset = 0;
                 // first row is zero
@@ -256,10 +270,13 @@ impl CopyTable {
                 offset += 1;
 
                 let tag_chip = BinaryNumberChip::construct(self.tag);
-                for copy_event in block.copy_events.iter() {
-                    for (tag, row, _) in Self::assignments(copy_event, *challenges) {
+                for copy_event in args.copy_events.iter() {
+                    for row in self.assignments(Self::AssignmentsArgs {
+                        copy_event,
+                        challenges,
+                    }) {
                         self.assign_row(&mut region, offset, row)?;
-                        tag_chip.assign(&mut region, offset, &tag)?;
+                        tag_chip.assign(&mut region, offset, &row.0)?;
                         offset += 1;
                     }
                 }

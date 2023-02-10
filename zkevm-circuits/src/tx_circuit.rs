@@ -6,7 +6,7 @@
 
 pub mod sign_verify;
 
-use crate::table::{keccak_table::KeccakTable, tx_table::TxTable};
+use crate::table::{keccak_table::KeccakTable, tx_table::TxTable, AssignTable, LookupTable};
 use crate::util::{Challenges, SubCircuit, SubCircuitConfig};
 use crate::witness;
 use bus_mapping::circuit_input_builder::keccak_inputs_tx_circuit;
@@ -23,6 +23,7 @@ use log::error;
 use sign_verify::{SignVerifyChip, SignVerifyConfig};
 use std::marker::PhantomData;
 
+use crate::table::tx_table::TxTableLoadArgs;
 pub use halo2_proofs::halo2curves::{
     group::{
         ff::{Field as GroupField, PrimeField},
@@ -188,12 +189,15 @@ impl<F: Field> SubCircuit<F> for TxCircuit<F> {
         let assigned_sig_verifs =
             self.sign_verify
                 .assign(&config.sign_verify, layouter, &sign_datas, challenges)?;
+
         config.tx_table.load(
             layouter,
-            &self.txs,
-            self.max_txs,
-            Some(assigned_sig_verifs),
-            challenges,
+            TxTableLoadArgs {
+                txs: &self.txs,
+                max_txs: self.max_txs,
+                sig_verif_vec: Some(&assigned_sig_verifs),
+                challenges: challenges.clone(),
+            },
         )?;
         Ok(())
     }

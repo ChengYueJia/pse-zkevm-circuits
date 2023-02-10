@@ -22,6 +22,8 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use crate::table::copy_table::{CopyTableAssignmentsArgs, CopyTableLoadArgs};
+use crate::table::AssignTable;
 use crate::witness::{Bytecode, RwMap};
 use crate::{
     evm_circuit::util::{constraint_builder::BaseConstraintBuilder, rlc},
@@ -437,10 +439,14 @@ impl<F: Field> CopyCircuitConfig<F> {
         challenges: Challenges<Value<F>>,
         copy_event: &CopyEvent,
     ) -> Result<(), Error> {
-        for (step_idx, (tag, table_row, circuit_row)) in
-            CopyTable::assignments(copy_event, challenges)
-                .iter()
-                .enumerate()
+        for (step_idx, (tag, table_row, circuit_row)) in self
+            .copy_table
+            .assignments(CopyTableAssignmentsArgs {
+                copy_event,
+                challenges,
+            })
+            .iter()
+            .enumerate()
         {
             let is_read = step_idx % 2 == 0;
 
@@ -795,6 +801,10 @@ pub mod dev {
     use crate::witness::Block;
 
     use crate::table::bytecode_table::BytecodeTableLoadArgs;
+    use crate::table::rw_table::RwTableLoadArgs;
+    use crate::table::tx_table::{TxTableAssignmentsArgs, TxTableLoadArgs};
+    use crate::table::AssignTable;
+    use crate::witness::Rw;
     use crate::{
         table::{bytecode_table::BytecodeTable, rw_table::RwTable, tx_table::TxTable},
         util::Challenges,
@@ -842,27 +852,31 @@ pub mod dev {
 
             config.0.tx_table.load(
                 &mut layouter,
-                &self.external_data.txs,
-                self.external_data.max_txs,
-                None,
-                &challenge_values,
+                TxTableLoadArgs {
+                    txs: &self.external_data.txs,
+                    max_txs: self.external_data.max_txs,
+                    sig_verif_vec: None,
+                    challenges: challenge_values.clone(),
+                },
             )?;
 
             config.0.rw_table.load(
                 &mut layouter,
-                &self.external_data.rws.table_assignments(),
-                self.external_data.max_rws,
-                challenge_values.evm_word(),
+                RwTableLoadArgs {
+                    rws: &self.external_data.rws.table_assignments(),
+                    padding_rows_num: self.external_data.max_rws,
+                    challenges: challenge_values.clone(),
+                },
             )?;
 
             config.0.bytecode_table.load(
                 &mut layouter,
                 BytecodeTableLoadArgs {
-                    bytecodes: Some(Vec::from_iter(self.external_data.bytecodes.values())),
-                    bytecode: None,
+                    bytecodes: Vec::from_iter(self.external_data.bytecodes.values()),
                     challenges: challenge_values.clone(),
                 },
             )?;
+
             self.synthesize_sub(&config.0, &challenge_values, &mut layouter)
         }
     }

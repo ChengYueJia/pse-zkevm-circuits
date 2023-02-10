@@ -16,6 +16,7 @@ use crate::evm_circuit::util::rlc;
 use crate::table::{
     block_table::BlockTable,
     tx_table::{TxFieldTag, TxTable},
+    AssignTable,
 };
 use crate::tx_circuit::TX_LEN;
 use crate::util::{random_linear_combine_word as rlc, Challenges, SubCircuit, SubCircuitConfig};

@@ -1,6 +1,6 @@
 use crate::evm_circuit::util::rlc;
 use crate::impl_expr;
-use crate::table::LookupTable;
+use crate::table::{AssignTable, LookupTable};
 use crate::tx_circuit::sign_verify::AssignedSignatureVerify;
 use crate::util::{random_linear_combine_word, Challenges};
 use eth_types::geth_types::Transaction;
@@ -61,11 +61,74 @@ pub struct TxTable {
     pub value: Column<Advice>,
 }
 
+/// Table load arguments
+pub(crate) struct TxTableLoadArgs<'txs, 'sigs, F: Field> {
+    /// Txs Values. Used for load method
+    pub(crate) txs: &'txs Vec<Transaction>,
+    /// Max size of txs
+    pub(crate) max_txs: usize,
+    /// The sig data
+    pub(crate) sig_verif_vec: Option<&'sigs Vec<AssignedSignatureVerify<F>>>,
+    /// Challenges
+    pub(crate) challenges: Challenges<Value<F>>,
+}
+
+/// Table load arguments
+pub(crate) struct TxTableAssignmentsArgs<'tx, 'sig, F: Field> {
+    /// Tx index.
+    tx_id: u64,
+    /// Tx Values. Used for load method.
+    tx: &'tx Transaction,
+    /// The signature verify.
+    signature_verify: Option<&'sig AssignedSignatureVerify<F>>,
+    /// Challenges
+    challenges: Challenges<Value<F>>,
+}
+
 type TxTableRow<F> = (Value<F>, TxFieldTag, Value<F>, Value<F>);
 
 impl TxTable {
+    fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: TxTableRow<F>,
+    ) -> Result<AssignedCell<F, F>, Error> {
+        region.assign_advice(
+            || format!("assign tx_id{}", offset),
+            self.tx_id,
+            offset,
+            || row.0,
+        )?;
+        region.assign_fixed(
+            || format!("assign tag {}", offset),
+            self.tag,
+            offset,
+            || Value::known(F::from(row.1 as u64)),
+        )?;
+        region.assign_advice(
+            || format!("assign index{}", offset),
+            self.index,
+            offset,
+            || row.2,
+        )?;
+        region.assign_advice(
+            || format!("assign value{}", offset),
+            self.value,
+            offset,
+            || row.3,
+        )
+    }
+}
+
+impl<'txs, 'sigs, 'tx, 'sig, F: Field> AssignTable<F> for TxTable {
+    const TABLE_NAME: &'static str = "tx table";
+    type TableRowValue = TxTableRow<F>;
+    type LoadArgs = TxTableLoadArgs<'txs, 'sigs, F>;
+    type AssignmentsArgs = TxTableAssignmentsArgs<'tx, 'sig, F>;
+
     /// Construct a new TxTable
-    pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
+    fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
         Self {
             tx_id: meta.advice_column(),
             tag: meta.fixed_column(),
@@ -74,14 +137,15 @@ impl TxTable {
         }
     }
 
-    /// Assignments for tx table
     fn assignments<F: Field>(
         &self,
-        challenges: Challenges<Value<F>>,
-        tx_id: u64,
-        tx: &Transaction,
-        sig_verif: Option<&AssignedSignatureVerify<F>>,
-    ) -> Vec<TxTableRow<F>> {
+        Self::AssignmentsArgs {
+            tx_id,
+            tx,
+            sig_verify,
+            challenges,
+        }: Self::AssignmentsArgs,
+    ) -> Vec<Self::TableRowValue> {
         let rlc_fn = |value| {
             challenges
                 .evm_word()
@@ -159,7 +223,7 @@ impl TxTable {
                     TxContextFieldTag::TxSignHash,
                     Value::known(F::zero()),
                     // Value::known(F::from(tx.call_data_length as u64)),
-                    if let Some(sig) = sig_verif {
+                    if let Some(sig) = sig_verify {
                         sig.msg_hash_rlc.value().copied()
                     } else {
                         Value::known(F::zero())
@@ -184,57 +248,18 @@ impl TxTable {
         .concat()
     }
 
-    pub(crate) fn assign_row<F: Field>(
-        &self,
-        region: &mut Region<F>,
-        offset: usize,
-        row: TxTableRow<F>,
-    ) -> Result<AssignedCell<F, F>, Error> {
-        region.assign_advice(
-            || format!("assign tx_id{}", offset),
-            self.tx_id,
-            offset,
-            || row.0,
-        )?;
-        region.assign_fixed(
-            || format!("assign tag {}", offset),
-            self.tag,
-            offset,
-            || Value::known(F::from(row.1 as u64)),
-        )?;
-        region.assign_advice(
-            || format!("assign index{}", offset),
-            self.index,
-            offset,
-            || row.2,
-        )?;
-        region.assign_advice(
-            || format!("assign value{}", offset),
-            self.value,
-            offset,
-            || row.3,
-        )
-    }
-
     /// Assign the `TxTable` from a list of block `Transaction`s, followig the
     /// same layout that the Tx Circuit uses.
-    pub(crate) fn load<F: Field>(
-        &self,
-        layouter: &mut impl Layouter<F>,
-        txs: &Vec<Transaction>,
-        max_txs: usize,
-        sig_verif_vec: Option<Vec<AssignedSignatureVerify<F>>>,
-        challenges: &Challenges<Value<F>>,
-    ) -> Result<(), Error> {
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
         assert!(
-            txs.len() <= max_txs,
+            args.txs.len() <= args.max_txs,
             "txs.len() <= max_txs: txs.len()={}, max_txs={}",
-            txs.len(),
-            max_txs
+            args.txs.len(),
+            args.max_txs
         );
 
         layouter.assign_region(
-            || "tx table",
+            || format!("assign {}", Self::TABLE_NAME),
             |mut region| {
                 let mut offset: usize = 0;
 
@@ -252,25 +277,28 @@ impl TxTable {
 
                 offset += 1;
 
-                let padding_txs: Vec<Transaction> = (txs.len()..max_txs)
+                let padding_txs: Vec<Transaction> = (args.txs.len()..args.max_txs)
                     .map(|_i| Transaction::default())
                     .collect();
-                for (i, tx) in txs.iter().chain(padding_txs.iter()).enumerate() {
-                    let sig_verify = if let Some(sig_vec) = &sig_verif_vec {
+                for (i, tx) in args.txs.iter().chain(padding_txs.iter()).enumerate() {
+                    let sig_verify = if let Some(sig_vec) = args.sig_verif_vec {
                         sig_vec.get(i)
                     } else {
                         None
                     };
 
                     let tx_id = i + 1;
-                    for row in
-                        self.assignments(*challenges, tx_id.try_into().unwrap(), tx, sig_verify)
-                    {
+                    for row in self.assignments(Self::AssignmentsArgs {
+                        tx_id: tx_id.try_into().unwrap(),
+                        tx,
+                        sig_verify,
+                        challenges: args.challenges,
+                    }) {
                         let assigned_cell = self.assign_row(&mut region, offset, row).unwrap();
 
                         if let Some(sig) = sig_verify {
-                            // Ref. spec 0. Copy constraints using fixed offsets between the tx rows
-                            // and the SignVerifyChip
+                            // Ref. spec 0. Copy constraints using fixed offsets between the tx
+                            // rows and the SignVerifyChip
                             match row.1 {
                                 TxContextFieldTag::CallerAddress => region
                                     .constrain_equal(assigned_cell.cell(), sig.address.cell())?,
