@@ -20,13 +20,23 @@ pub(crate) mod tx_table;
 
 use crate::impl_expr;
 use eth_types::Field;
-use halo2_proofs::circuit::Region;
+use halo2_proofs::circuit::{Layouter, Region};
 use halo2_proofs::{plonk::*, poly::Rotation};
+use itertools::Itertools;
 
 use strum_macros::{EnumCount, EnumIter};
 
 /// Trait used to define lookup tables
 pub trait LookupTable<F: Field> {
+    /// Name of the table
+    const TABLE_NAME: &'static str;
+
+    /// The value of a row in table.
+    type TableRowValue;
+
+    /// The arguments for loading table.
+    type LoadArgs;
+
     /// Returns the list of ALL the table columns following the table order.
     fn columns(&self) -> Vec<Column<Any>>;
 
@@ -67,6 +77,30 @@ pub trait LookupTable<F: Field> {
             .zip(self.annotations().iter())
             .for_each(|(&col, ann)| region.name_column(|| ann, col))
     }
+
+    fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: Self::TableRowValue,
+    ) -> Result<(), Error> {
+        let table_column = self.advice_columns();
+
+        for (column, value) in table_column.iter().zip_eq(row) {
+            region.assign_advice(
+                || format!("{} row, offset {}", Self::TABLE_NAME, offset),
+                *column,
+                offset,
+                || value,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Assignments LoadArgs to TableRowValue.
+    fn assignments<F: Field>(&self, args: Self::LoadArgs) -> Vec<Self::TableRowValue>;
+
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error>;
 }
 
 impl<F: Field, C: Into<Column<Any>> + Copy, const W: usize> LookupTable<F> for [C; W] {

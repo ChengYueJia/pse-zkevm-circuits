@@ -1,6 +1,7 @@
 //! The EVM circuit implementation.
 
 #![allow(missing_docs)]
+
 use halo2_proofs::{
     circuit::{Layouter, Value},
     plonk::*,
@@ -296,6 +297,8 @@ pub mod test {
 
     use eth_types::{Field, Word};
 
+    use crate::table::block_table::BlockTableLoadArgs;
+    use crate::table::bytecode_table::BytecodeTableLoadArgs;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         plonk::{Circuit, ConstraintSystem, Error},
@@ -392,12 +395,22 @@ pub mod test {
                 block.circuits_params.max_rws,
                 challenges.evm_word(),
             )?;
-            config
-                .bytecode_table
-                .load(&mut layouter, block.bytecodes.values(), &challenges)?;
-            config
-                .block_table
-                .load(&mut layouter, &block.context, challenges.evm_word())?;
+            config.bytecode_table.load(
+                &mut layouter,
+                BytecodeTableLoadArgs {
+                    bytecodes: Some(Vec::from_iter(block.bytecodes.values())),
+                    bytecode: None,
+                    challenges: challenges.clone(),
+                },
+            )?;
+
+            config.block_table.load(
+                &mut layouter,
+                BlockTableLoadArgs {
+                    block: block.context.clone(),
+                    randomness: challenges.evm_word(),
+                },
+            )?;
             config.copy_table.load(&mut layouter, block, &challenges)?;
             config
                 .keccak_table

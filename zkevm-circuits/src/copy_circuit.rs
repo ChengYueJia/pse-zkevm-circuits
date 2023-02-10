@@ -794,6 +794,7 @@ pub mod dev {
     #[cfg(test)]
     use crate::witness::Block;
 
+    use crate::table::bytecode_table::BytecodeTableLoadArgs;
     use crate::{
         table::{bytecode_table::BytecodeTable, rw_table::RwTable, tx_table::TxTable},
         util::Challenges,
@@ -856,8 +857,11 @@ pub mod dev {
 
             config.0.bytecode_table.load(
                 &mut layouter,
-                self.external_data.bytecodes.values(),
-                &challenge_values,
+                BytecodeTableLoadArgs {
+                    bytecodes: Some(Vec::from_iter(self.external_data.bytecodes.values())),
+                    bytecode: None,
+                    challenges: challenge_values.clone(),
+                },
             )?;
             self.synthesize_sub(&config.0, &challenge_values, &mut layouter)
         }

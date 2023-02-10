@@ -48,7 +48,13 @@ pub struct BlockTable {
     pub value: Column<Advice>,
 }
 
-type BlockTableRow<F> = [Value<F>; 3];
+/// Table load arguments
+pub(crate) struct BlockTableLoadArgs<F: Field> {
+    /// Block Values
+    pub(crate) block: BlockContext,
+    /// Randomness
+    pub(crate) randomness: Value<F>,
+}
 
 impl BlockTable {
     /// Construct a new BlockTable
@@ -59,12 +65,31 @@ impl BlockTable {
             value: meta.advice_column_in(SecondPhase),
         }
     }
-    /// Assignments for block table
-    pub(crate) fn assignments<F: Field>(
+}
+
+impl<F: Field> LookupTable<F> for BlockTable {
+    const TABLE_NAME: &'static str = "block table";
+
+    type TableRowValue = [Value<F>; 3];
+
+    type LoadArgs = BlockTableLoadArgs<F>;
+
+    fn columns(&self) -> Vec<Column<Any>> {
+        vec![self.tag.into(), self.index.into(), self.value.into()]
+    }
+
+    fn annotations(&self) -> Vec<String> {
+        vec![
+            String::from("tag"),
+            String::from("index"),
+            String::from("value"),
+        ]
+    }
+
+    fn assignments<F: Field>(
         &self,
-        block: &BlockContext,
-        randomness: Value<F>,
-    ) -> Vec<BlockTableRow<F>> {
+        Self::LoadArgs { block, randomness }: Self::LoadArgs,
+    ) -> Vec<Self::TableRowValue> {
         [
             vec![
                 [
@@ -126,59 +151,29 @@ impl BlockTable {
         .concat()
     }
 
-    pub(crate) fn assign_row<F: Field>(
-        &self,
-        region: &mut Region<F>,
-        offset: usize,
-        row: BlockTableRow<F>,
-    ) -> Result<(), Error> {
-        let table_column = <BlockTable as LookupTable<F>>::advice_columns(self);
-        for (column, value) in table_column.iter().zip_eq(row) {
-            region.assign_advice(
-                || format!("bytecode table row {}", offset),
-                *column,
-                offset,
-                || value,
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Assign the `BlockTable` from a `BlockContext`.
-    pub fn load<F: Field>(
-        &self,
-        layouter: &mut impl Layouter<F>,
-        block: &BlockContext,
-        randomness: Value<F>,
-    ) -> Result<(), Error> {
+    fn load(&self, layouter: &mut impl Layouter<F>, args: Self::LoadArgs) -> Result<(), Error> {
         layouter.assign_region(
-            || "block table",
+            || format!("assign {}", Self::TABLE_NAME),
             |mut region| {
                 let mut offset = 0;
-                self.assign_row(&mut region, offset, [Value::known(F::zero()); 3])?;
+
+                // assign zero row
+                <BlockTable as LookupTable<F>>::assign_row(
+                    self,
+                    &mut region,
+                    offset,
+                    [Value::known(F::zero()); 3],
+                )?;
 
                 offset += 1;
-                for row in self.assignments(block, randomness) {
-                    self.assign_row(&mut region, offset, row)?;
+                for row in self.assignments(args) {
+                    <BlockTable as LookupTable<F>>::assign_row(self, &mut region, offset, row)?;
+
                     offset += 1;
                 }
 
                 Ok(())
             },
         )
-    }
-}
-
-impl<F: Field> LookupTable<F> for BlockTable {
-    fn columns(&self) -> Vec<Column<Any>> {
-        vec![self.tag.into(), self.index.into(), self.value.into()]
-    }
-
-    fn annotations(&self) -> Vec<String> {
-        vec![
-            String::from("tag"),
-            String::from("index"),
-            String::from("value"),
-        ]
     }
 }
