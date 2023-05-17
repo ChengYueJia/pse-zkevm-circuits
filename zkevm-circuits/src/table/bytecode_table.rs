@@ -1,4 +1,5 @@
 use super::*;
+use eth_types::evm_types::OpcodeId;
 
 /// Tag to identify the field in a Bytecode Table row
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +26,8 @@ pub struct BytecodeTable {
     pub value: Column<Advice>,
 }
 
+type BytecodeTableRow<F> = [Value<F>; 5];
+
 impl BytecodeTable {
     /// Construct a new BytecodeTable
     pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
@@ -39,6 +42,66 @@ impl BytecodeTable {
         }
     }
 
+    /// Assignments for bytecode table
+    pub fn assignments<F: Field>(
+        &self,
+        bytecode: &Bytecode,
+        challenges: &Challenges<Value<F>>,
+    ) -> Vec<[Value<F>; 5]> {
+        let n = 1 + bytecode.bytes.len();
+        let mut rows = Vec::with_capacity(n);
+        let hash = challenges
+            .evm_word()
+            .map(|challenge| rlc::value(&bytecode.hash.to_le_bytes(), challenge));
+
+        rows.push([
+            hash,
+            Value::known(F::from(BytecodeFieldTag::Header as u64)),
+            Value::known(F::ZERO),
+            Value::known(F::ZERO),
+            Value::known(F::from(bytecode.bytes.len() as u64)),
+        ]);
+
+        let mut push_data_left = 0;
+        for (idx, byte) in bytecode.bytes.iter().enumerate() {
+            let is_code = push_data_left == 0;
+
+            push_data_left = if is_code {
+                // push_data_left will be > 0 only if it is a push opcode
+                OpcodeId::from(*byte).data_len()
+            } else {
+                push_data_left - 1
+            };
+
+            rows.push([
+                hash,
+                Value::known(F::from(BytecodeFieldTag::Byte as u64)),
+                Value::known(F::from(idx as u64)),
+                Value::known(F::from(is_code as u64)),
+                Value::known(F::from(*byte as u64)),
+            ])
+        }
+        rows
+    }
+
+    pub(crate) fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: BytecodeTableRow<F>,
+    ) -> Result<(), Error> {
+        let table_column = <BytecodeTable as LookupTable<F>>::advice_columns(self);
+        for (column, value) in table_column.iter().zip_eq(row) {
+            region.assign_advice(
+                || format!("bytecode table row {}", offset),
+                *column,
+                offset,
+                || value,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Assign the `BytecodeTable` from a list of bytecodes, followig the same
     /// table layout that the Bytecode Circuit uses.
     pub fn load<'a, F: Field>(
@@ -51,31 +114,17 @@ impl BytecodeTable {
             || "bytecode table",
             |mut region| {
                 let mut offset = 0;
-                for column in <BytecodeTable as LookupTable<F>>::advice_columns(self) {
-                    region.assign_advice(
-                        || "bytecode table all-zero row",
-                        column,
-                        offset,
-                        || Value::known(F::ZERO),
-                    )?;
-                }
+                self.assign_row(&mut region, offset, [Value::known(F::ZERO); 5])?;
+
                 offset += 1;
 
-                let bytecode_table_columns =
-                    <BytecodeTable as LookupTable<F>>::advice_columns(self);
                 for bytecode in bytecodes.clone() {
-                    for row in bytecode.table_assignments(challenges) {
-                        for (&column, value) in bytecode_table_columns.iter().zip_eq(row) {
-                            region.assign_advice(
-                                || format!("bytecode table row {}", offset),
-                                column,
-                                offset,
-                                || value,
-                            )?;
-                        }
+                    for row in self.assignments(bytecode, challenges) {
+                        self.assign_row(&mut region, offset, row)?;
                         offset += 1;
                     }
                 }
+
                 Ok(())
             },
         )

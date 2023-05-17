@@ -33,6 +33,8 @@ impl<F: Field> LookupTable<F> for KeccakTable {
     }
 }
 
+type KeccakTableRow<F> = [Value<F>; 4];
+
 impl KeccakTable {
     /// Construct a new KeccakTable
     pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
@@ -72,17 +74,16 @@ impl KeccakTable {
     }
 
     /// Assign a table row for keccak table
-    pub fn assign_row<F: Field>(
+    pub(crate) fn assign_row<F: Field>(
         &self,
         region: &mut Region<F>,
         offset: usize,
-        values: [Value<F>; 4],
+        row: KeccakTableRow<F>,
     ) -> Result<(), Error> {
-        for (&column, value) in <KeccakTable as LookupTable<F>>::advice_columns(self)
-            .iter()
-            .zip(values.iter())
-        {
-            region.assign_advice(|| format!("assign {}", offset), column, offset, || *value)?;
+        let table_column = <KeccakTable as LookupTable<F>>::advice_columns(self);
+
+        for (column, value) in table_column.iter().zip_eq(row) {
+            region.assign_advice(|| format!("assign {}", offset), *column, offset, || value)?;
         }
         Ok(())
     }
@@ -99,28 +100,13 @@ impl KeccakTable {
             || "keccak table",
             |mut region| {
                 let mut offset = 0;
-                for column in <KeccakTable as LookupTable<F>>::advice_columns(self) {
-                    region.assign_advice(
-                        || "keccak table all-zero row",
-                        column,
-                        offset,
-                        || Value::known(F::ZERO),
-                    )?;
-                }
+
+                self.assign_row(&mut region, offset, [Value::known(F::ZERO); 4])?;
                 offset += 1;
 
-                let keccak_table_columns = <KeccakTable as LookupTable<F>>::advice_columns(self);
                 for input in inputs.clone() {
                     for row in Self::assignments(input, challenges) {
-                        // let mut column_index = 0;
-                        for (&column, value) in keccak_table_columns.iter().zip_eq(row) {
-                            region.assign_advice(
-                                || format!("keccak table row {}", offset),
-                                column,
-                                offset,
-                                || value,
-                            )?;
-                        }
+                        self.assign_row(&mut region, offset, row)?;
                         offset += 1;
                     }
                 }

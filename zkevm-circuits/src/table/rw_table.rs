@@ -80,7 +80,7 @@ impl RwTable {
             aux2: meta.advice_column_in(SecondPhase),
         }
     }
-    fn assign<F: Field>(
+    fn assign_row<F: Field>(
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
@@ -128,7 +128,7 @@ impl RwTable {
     ) -> Result<(), Error> {
         let (rows, _) = RwMap::table_assignments_prepad(rws, n_rows);
         for (offset, row) in rows.iter().enumerate() {
-            self.assign(region, offset, &row.table_assignment(challenges))?;
+            self.assign_row(region, offset, &row.table_assignment(challenges))?;
         }
         Ok(())
     }

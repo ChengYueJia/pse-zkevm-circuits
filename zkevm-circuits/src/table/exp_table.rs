@@ -27,6 +27,8 @@ pub struct ExpTable {
     pub exponentiation_lo_hi: Column<Advice>,
 }
 
+type ExpTableRow<F> = [F; 5];
+
 impl ExpTable {
     /// Construct the Exponentiation table.
     pub fn construct<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {
@@ -42,7 +44,7 @@ impl ExpTable {
 
     /// Given an exponentiation event and randomness, get assignments to the
     /// exponentiation table.
-    pub fn assignments<F: Field>(exp_event: &ExpEvent) -> Vec<[F; 5]> {
+    pub fn assignments<F: Field>(exp_event: &ExpEvent) -> Vec<ExpTableRow<F>> {
         let mut assignments = Vec::new();
         let base_limbs = split_u256_limb64(&exp_event.base);
         let identifier = F::from(exp_event.identifier as u64);
@@ -113,6 +115,57 @@ impl ExpTable {
         assignments
     }
 
+    pub(crate) fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: ExpTableRow<F>,
+    ) -> Result<(), Error> {
+        let table_column = <ExpTable as LookupTable<F>>::advice_columns(self);
+
+        for (column, value) in table_column.iter().zip_eq(row) {
+            region.assign_advice(
+                || format!("exponentiation table row {}", offset),
+                *column,
+                offset,
+                || Value::known(value),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn load_with_region<F: Field>(
+        &self,
+        region: &mut Region<'_, F>,
+        block: &Block<F>,
+    ) -> Result<(), Error> {
+        let mut offset = 0;
+        for exp_event in block.exp_events.iter() {
+            for row in Self::assignments(exp_event) {
+                // assign advice columns
+                self.assign_row(region, offset, row)?;
+                // asign is_step
+                let is_step = if offset % OFFSET_INCREMENT == 0 {
+                    F::ONE
+                } else {
+                    F::ZERO
+                };
+                region.assign_fixed(
+                    || format!("exponentiation table row {}", offset),
+                    self.is_step,
+                    offset,
+                    || Value::known(is_step),
+                )?;
+
+                offset += 1;
+            }
+        }
+
+        self.assign_row(region, offset, [F::ZERO; 5])?;
+
+        Ok(())
+    }
+
     /// Assign witness data from a block to the exponentiation table.
     pub fn load<F: Field>(
         &self,
@@ -121,47 +174,7 @@ impl ExpTable {
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "exponentiation table",
-            |mut region| {
-                let mut offset = 0;
-                let exp_table_columns = <ExpTable as LookupTable<F>>::advice_columns(self);
-                for exp_event in block.exp_events.iter() {
-                    for row in Self::assignments::<F>(exp_event) {
-                        for (&column, value) in exp_table_columns.iter().zip_eq(row) {
-                            region.assign_advice(
-                                || format!("exponentiation table row {}", offset),
-                                column,
-                                offset,
-                                || Value::known(value),
-                            )?;
-                        }
-                        let is_step = if offset % OFFSET_INCREMENT == 0 {
-                            F::ONE
-                        } else {
-                            F::ZERO
-                        };
-                        region.assign_fixed(
-                            || format!("exponentiation table row {}", offset),
-                            self.is_step,
-                            offset,
-                            || Value::known(is_step),
-                        )?;
-                        offset += 1;
-                    }
-                }
-
-                // pad an empty row
-                let row = [F::from_u128(0); 5];
-                for (column, value) in exp_table_columns.iter().zip_eq(row) {
-                    region.assign_advice(
-                        || format!("exponentiation table row {}", offset),
-                        *column,
-                        offset,
-                        || Value::known(value),
-                    )?;
-                }
-
-                Ok(())
-            },
+            |mut region| self.load_with_region(&mut region, block),
         )
     }
 }

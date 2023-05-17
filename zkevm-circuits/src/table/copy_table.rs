@@ -1,8 +1,5 @@
 use super::*;
 
-type CopyTableRow<F> = [(Value<F>, &'static str); 8];
-type CopyCircuitRow<F> = [(Value<F>, &'static str); 4];
-
 /// Copy Table, used to verify copies of byte chunks between Memory, Bytecode,
 /// TxLogs and TxCallData.
 #[derive(Clone, Copy, Debug)]
@@ -37,6 +34,9 @@ pub struct CopyTable {
     /// TxLog.
     pub tag: BinaryNumberConfig<CopyDataType, 3>,
 }
+
+type CopyTableRow<F> = [(Value<F>, &'static str); 8];
+type CopyCircuitRow<F> = [(Value<F>, &'static str); 4];
 
 impl CopyTable {
     /// Construct a new CopyTable
@@ -197,6 +197,25 @@ impl CopyTable {
         assignments
     }
 
+    pub(crate) fn assign_row<F: Field>(
+        &self,
+        region: &mut Region<F>,
+        offset: usize,
+        row: CopyTableRow<F>,
+    ) -> Result<(), Error> {
+        let table_column = <CopyTable as LookupTable<F>>::advice_columns(self);
+
+        for (column, (value, label)) in table_column.iter().zip_eq(row) {
+            region.assign_advice(
+                || format!("copy table {} row {}", label, offset),
+                *column,
+                offset,
+                || value,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Assign the `CopyTable` from a `Block`.
     pub fn load<F: Field>(
         &self,
@@ -208,7 +227,9 @@ impl CopyTable {
             || "copy table",
             |mut region| {
                 let mut offset = 0;
-                for column in <CopyTable as LookupTable<F>>::advice_columns(self) {
+                // first row is zero
+                let table_column = <CopyTable as LookupTable<F>>::advice_columns(self);
+                for column in table_column {
                     region.assign_advice(
                         || "copy table all-zero row",
                         column,
@@ -216,20 +237,13 @@ impl CopyTable {
                         || Value::known(F::ZERO),
                     )?;
                 }
+
                 offset += 1;
 
                 let tag_chip = BinaryNumberChip::construct(self.tag);
-                let copy_table_columns = <CopyTable as LookupTable<F>>::advice_columns(self);
                 for copy_event in block.copy_events.iter() {
                     for (tag, row, _) in Self::assignments(copy_event, *challenges) {
-                        for (&column, (value, label)) in copy_table_columns.iter().zip_eq(row) {
-                            region.assign_advice(
-                                || format!("{} at row: {}", label, offset),
-                                column,
-                                offset,
-                                || value,
-                            )?;
-                        }
+                        self.assign_row(&mut region, offset, row)?;
                         tag_chip.assign(&mut region, offset, &tag)?;
                         offset += 1;
                     }
