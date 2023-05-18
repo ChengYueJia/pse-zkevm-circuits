@@ -44,7 +44,7 @@ impl ExpTable {
 
     /// Given an exponentiation event and randomness, get assignments to the
     /// exponentiation table.
-    pub fn assignments<F: Field>(exp_event: &ExpEvent) -> Vec<ExpTableRow<F>> {
+    fn assignments<F: Field>(exp_event: &ExpEvent) -> Vec<ExpTableRow<F>> {
         let mut assignments = Vec::new();
         let base_limbs = split_u256_limb64(&exp_event.base);
         let identifier = F::from(exp_event.identifier as u64);
@@ -98,6 +98,10 @@ impl ExpTable {
                 F::ZERO,
                 F::ZERO,
             ]);
+
+            // mul_chip has 7 rows, exp_table has 4 rows. So we increment the offset by
+            // the maximum number of rows(7 rows) taken up by any gadget within the
+            // exponentiation circuit.
             for _ in ROWS_PER_STEP..OFFSET_INCREMENT {
                 assignments.push([F::ZERO, F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
             }
@@ -137,31 +141,29 @@ impl ExpTable {
     pub(crate) fn load_with_region<F: Field>(
         &self,
         region: &mut Region<'_, F>,
-        block: &Block<F>,
+        exp_event: &ExpEvent,
+        offset: &mut usize,
     ) -> Result<(), Error> {
-        let mut offset = 0;
-        for exp_event in block.exp_events.iter() {
-            for row in Self::assignments(exp_event) {
-                // assign advice columns
-                self.assign_row(region, offset, row)?;
-                // asign is_step
-                let is_step = if offset % OFFSET_INCREMENT == 0 {
-                    F::ONE
-                } else {
-                    F::ZERO
-                };
-                region.assign_fixed(
-                    || format!("exponentiation table row {}", offset),
-                    self.is_step,
-                    offset,
-                    || Value::known(is_step),
-                )?;
+        for row in Self::assignments(exp_event) {
+            // assign advice columns
+            self.assign_row(region, *offset, row)?;
 
-                offset += 1;
-            }
+            // assign fixed column
+            // as each step has 7 rows, we only assign the first row of step as one, others as zero.
+            let is_step = if *offset % OFFSET_INCREMENT == 0 {
+                F::ONE
+            } else {
+                F::ZERO
+            };
+            region.assign_fixed(
+                || format!("exponentiation table row {}", offset),
+                self.is_step,
+                *offset,
+                || Value::known(is_step),
+            )?;
+
+            *offset += 1;
         }
-
-        self.assign_row(region, offset, [F::ZERO; 5])?;
 
         Ok(())
     }
@@ -174,7 +176,18 @@ impl ExpTable {
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "exponentiation table",
-            |mut region| self.load_with_region(&mut region, block),
+            |mut region| {
+                let mut offset: usize = 0;
+
+                for exp_event in block.exp_events.iter() {
+                    self.load_with_region(&mut region, exp_event, &mut offset)?;
+                }
+
+                // assign the zero row
+                self.assign_row(&mut region, offset, [F::ZERO; 5])?;
+
+                Ok(())
+            },
         )
     }
 }

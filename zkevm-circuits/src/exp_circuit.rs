@@ -349,54 +349,27 @@ impl<F: Field> ExpCircuitConfig<F> {
         parity_check_chip: &mut MulAddChip<F>,
     ) -> Result<(), Error> {
         let mut exponent = exp_event.exponent;
-        for (step, step_assignments) in exp_event
-            .steps
-            .iter()
-            .rev()
-            .zip(ExpTable::assignments::<F>(exp_event).chunks_exact(OFFSET_INCREMENT))
-        {
+
+        for (idx, step) in exp_event.steps.iter().rev().enumerate() {
+            // mul_chip has 7 rows, exp_table has 4 rows. So we increment the offset by
+            // the maximum number of rows(7 rows) taken up by any gadget within the
+            // exponentiation circuit.
+            // Note: the offset will be ass_assigned within exp_table load_with_region function.
+            let offset = *offset + idx * OFFSET_INCREMENT;
+
             // assign everything except the exp table.
             self.assign_step(
                 region,
-                *offset,
+                offset,
                 &mut exponent,
                 step,
                 mul_chip,
                 parity_check_chip,
             )?;
-            // assign exp table.
-            for (i, assignment) in step_assignments.iter().enumerate() {
-                for (column, value) in <ExpTable as LookupTable<F>>::advice_columns(&self.exp_table)
-                    .iter()
-                    .zip(assignment)
-                {
-                    region.assign_advice(
-                        || format!("exp circuit: {:?}: {}", *column, *offset + i),
-                        *column,
-                        *offset + i,
-                        || Value::known(*value),
-                    )?;
-                }
-            }
-            region.assign_fixed(
-                || format!("exp_circuit: {:?}: {}", self.exp_table.is_step, offset),
-                self.exp_table.is_step,
-                *offset,
-                || Value::known(F::ONE),
-            )?;
-            for i in 1..OFFSET_INCREMENT {
-                region.assign_fixed(
-                    || format!("exp_circuit: {:?}: {}", self.exp_table.is_step, *offset + i),
-                    self.exp_table.is_step,
-                    *offset + i,
-                    || Value::known(F::ZERO),
-                )?;
-            }
-            // mul_chip has 7 rows, exp_table has 4 rows. So we increment the offset by
-            // the maximum number of rows taken up by any gadget within the
-            // exponentiation circuit.
-            *offset += OFFSET_INCREMENT;
         }
+
+        self.exp_table.load_with_region(region, exp_event, offset)?;
+
         Ok(())
     }
 
